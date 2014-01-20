@@ -1,0 +1,34 @@
+// GoWell.idl : IDL source for GoWell
+//
+
+// This file will be processed by the MIDL tool to
+// produce the type library (GoWell.tlb) and marshalling code.
+
+import "oaidl.idl";
+import "ocidl.idl";
+
+[
+	object,
+	uuid(A9726885-B690-4CDF-89C3-B849D8368052),
+	dual,
+	nonextensible,
+	pointer_default(unique)
+]
+interface IGoWellBHO : IDispatch{
+};
+[
+	uuid(220B914B-D2CD-4A52-9746-370DD81FCBB6),
+	version(1.0),
+]
+library GoWellLib
+{
+	importlib("stdole2.tlb");
+	[
+		uuid(B2ADE44D-7A37-47F4-9A8D-92142F37DCED)		
+	]
+	coclass GoWellBHO
+	{
+		[default] interface IGoWellBHO;
+	};
+};
+

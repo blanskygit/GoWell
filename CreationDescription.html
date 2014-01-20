@@ -1,0 +1,332 @@
+http://msdn.microsoft.com/en-us/library/bb250489%28VS.85%29.aspx
+
+Building Browser Helper Objects with Visual Studio 2005
+
+87 out of 104 rated this helpful - Rate this topic
+As of December 2011, this topic has been archived. As a result, it is no longer actively maintained. For more information, see Archived Content. For information, recommendations, and guidance regarding the current version of Internet Explorer, see IE Developer Center.
+Tony Schreiner, John Sudds
+Microsoft Corporation
+October 27, 2006
+Summary: This article demonstrates how to use Microsoft Visual Studio 2005 to create a simple Browser Helper Object (BHO), a Component Object Model (COM) object that implements the IObjectWithSite interface and attaches itself to Internet Explorer. This article describes how to create an entry-level BHO step-by-step. At first, the BHO displays a message that reads "Hello World!" as Internet Explorer loads a document. Then, the BHO is extended to remove images from the loaded page. This article is written for developers who want to learn how to extend the functionality of the browser and to create Web developer tools for Internet Explorer. (8 printed pages)
+Contents
+Introduction
+Overview
+Setting up the Project
+Implementing the Basics
+Responding to Events
+Manipulating the DOM
+Summary
+Related Topics
+Introduction
+This article relies on Microsoft Visual Studio 2005 and Active Template Library (ATL) to develop a BHO using C++. We decided to use ATL because it conveniently implements a basic boilerplate that we can extend for our needs. There are other ways to create a BHO, such as using Microsoft Foundation Classes (MFC) or the Win32 API and COM, but ATL is a lightweight library that automatically handles a lot of the details for us, including setting up the registry with the BHO class identifier (CLSID).
+Another strength of ATL is its COM-aware smart pointer classes (such as CComPtr and CComBSTR) that manage the lifetime of COM objects. For example, CComPtr calls AddRef as a value is assigned, and calls Release as the object is destroyed or goes out of scope. Smart pointers simplify the code and help eliminate memory leaks. Their stability and reliability are especially useful when used within the scope of a single method.
+The first part of this article walks you through the process of implementing a simple BHO and verifying that it is loaded by Internet Explorer. The next part demonstrates how to connect the BHO to browser events, and the final part shows a simple interaction with the DHTML Document Object Model (DOM) that changes the appearance of a Web page.
+Overview
+What exactly is a Browser Helper Object (BHO)? In a nutshell, a BHO is a lightweight DLL extension that adds custom functionality to Internet Explorer. Although it is less common and not the focus of this article, BHOs can also add functionality to the Windows Explorer shell.
+BHOs typically do not provide any user interface (UI) of their own. Rather, they function in the background by responding to browser events and user input. For example, BHOs can block pop-ups, auto-fill forms, or add support for mouse gestures. It is a common misconception that BHOs are required by toolbar extensions; however, BHOs used in conjunction with toolbars can provide an even richer user experience.
+Note  BHOs are convenient tools for end users and developers alike; however, because BHOs are granted considerable power over the browser and Web content, and because they often go undetected, users should take great care to obtain and install BHOs from reliable sources.
+The lifetime of a BHO is the same as the lifetime of the browser instance that it interacts with. In Internet Explorer 6 and earlier, this means that a new BHO is created (and destroyed) for each new top-level window. On the other hand, Internet Explorer 7 creates and destroys a new BHO for each tab. BHOs are not loaded by other applications that host the WebBrowser control or by windows such as HTML dialog boxes.
+The primary requirement of a BHO is to implement the IObjectWithSite interface. This interface exposes a method, SetSite, that facilitates the initial communication with Internet Explorer and notifies the BHO when it is about to be released. We create a simple browser extension by implementing this interface, and then adding the CLSID of the BHO into the registry.
+Let's get started.
+Setting up the Project
+To create a BHO project with Microsoft Visual Studio 2005:
+On the File menu, click New Project....
+The New Project dialog box appears. This dialog box lists the application types that Visual Studio can create.
+Under the Visual C++ node, select "ATL" if it is not already selected, then select "ATL Project" from the Visual C++ project types. Name the project "HelloWorld" and use the default location. Click	OK.
+In the ATL Project Wizard, ensure that the server type is "Dynamic-link library (DLL)" and click Finish.
+At this point, Visual Studio has created boilerplate for a DLL. We now add the COM object that implements the BHO.
+In the Solution Explorer panel, right-click on the project and select Class... from the Add submenu.
+Select "ATL Simple Object" and click Add. The ATL Simple Object Wizard appears.
+In Names of the ATL Simple Object Wizard, type "HelloWorldBHO" as a Short Name.The remaining names are filled in automatically.
+In Options of the ATL Simple Object Wizard, select "Apartment" for Threading Model, "No" for Aggregation, "Dual" for Interface, and "IObjectWithSite" for Support. ATL Simple Object Wizard Options
+Click Finish.
+The following files are created as part of this project.
+HelloWorldBHO.h – this header file contains the class definition for the BHO.
+HelloWorldBHO.cpp – this source file is the main file for the project and contains the COM object.
+HelloWorld.cpp – this source file implements the exports that expose the COM object through the DLL.
+HelloWorld.idl – this source file can be used to define custom COM interfaces. For this article, we will not change this file.
+HelloWorld.rgs – this resource file contains the registry keys that are written and removed when the DLL is registered and unregistered.
+Implementing the Basics
+The ATL Project Wizard provides a default implementation of SetSite. Although the interface contract of IObjectWithSite implies that this method may be called again and again as necessary, Internet Explorer invokes this method exactly twice; once to establish a connection, and again as the browser is exiting. Specifically, the SetSite implementation in our BHO performs the following actions:
+Stores a reference to the site. During initialization, the browser passes a IUnknown pointer to the top-level WebBrowser Control, and the BHO stores a reference to it in a private member variable.
+Releases the site pointer currently being held. When Internet Explorer passes NULL, the BHO must release all interface references and disconnect from the browser.
+As part of the processing of SetSite, the BHO should perform other initialization and uninitialization as required. For example, you can establish a connection point to the browser in order to receive browser events.
+HelloWorldBHO.h
+Double-click to open HelloWorldBHO.h from the Visual Studio Solution Explorer.
+First, include shlguid.h. This file defines interface identifiers for IWebBrowser2 and the events that are used later in the project.
+
+#include <shlguid.h>     // IID_IWebBrowser2, DIID_DWebBrowserEvents2, etc.
+Next, in a public section of the CHelloWorldBHO class, declare SetSite.
+
+STDMETHOD(SetSite)(IUnknown *pUnkSite);
+The STDMETHOD macro is an ATL convention that marks the method as virtual and ensures that it has the right calling convention for the public COM interface. It helps to demarcate COM interfaces from other public methods that may exist on the class. The STDMETHODIMP macro is likewise used when implementing the member method.
+Finally, in a private section of the class declaration, declare a member variable to store the browser site.
+
+private:
+    CComPtr<IWebBrowser2>  m_spWebBrowser;
+HelloWorldBHO.cpp
+Switch now to HelloWorldBHO.cpp and insert the following code for SetSite.
+STDMETHODIMP CHelloWorldBHO::SetSite(IUnknown* pUnkSite)
+{
+    if (pUnkSite != NULL)
+    {
+        // Cache the pointer to IWebBrowser2.
+        pUnkSite->QueryInterface(IID_IWebBrowser2, (void**)&m_spWebBrowser);
+    }
+    else
+    {
+        // Release cached pointers and other resources here.
+        m_spWebBrowser.Release();
+    }
+
+    // Return the base class implementation
+    return IObjectWithSiteImpl<CHelloWorldBHO>::SetSite(pUnkSite);
+}
+During initialization, the browser passes a reference to its top-level IWebBrowser2 interface, which we cache. During uninitialization, the browser passes NULL. To avoid memory leaks and circular reference counts, it's important to release all pointers and resources at that time. Finally, we call the base class implementation so that it can fulfill the rest of the interface contract.
+HelloWorld.cpp
+When a DLL is loaded, the system calls the DllMain function with a DLL_PROCESS_ATTACH notification. Because Internet Explorer makes extensive use of multi-threading, frequent DLL_THREAD_ATTACH and DLL_THREAD_DETACH notifications to DllMain can slow the overall performance of the extension and the browser process. Since this BHO does not require thread-level tracking, we can call DisableThreadLibraryCalls during the DLL_PROCESS_ATTACH notification to avoid the overhead of new thread notifications.
+In HelloWorld.cpp, code the DllMain function as follows:
+extern "C" BOOL WINAPI DllMain(HINSTANCE hInstance, DWORD dwReason, LPVOID lpReserved)
+{
+    if (dwReason == DLL_PROCESS_ATTACH)
+    {
+        DisableThreadLibraryCalls(hInstance);
+    }
+    return _AtlModule.DllMain(dwReason, lpReserved); 
+}
+Register the BHO
+All that remains is to add the CLSID of the BHO to the registry. This entry marks the DLL as a browser helper object and causes Internet Explorer to load the BHO at start-up. Visual Studio can register the CLSID when it builds the project.
+Note  On Windows Vista, Visual Studio requires elevated privileges to interact with the registry. Make sure to start the development environment by right-clicking Microsoft Visual Studio 2005 in the Start menu and selecting Run as administrator.
+The CLSID for this BHO is found in HelloWorld.idl, in a block of code similar to the following:
+
+    importlib("stdole2.tlb");
+    [
+        uuid(D2F7E1E3-C9DC-4349-B72C-D5A708D6DD77),
+        helpstring("HelloWorldBHO Class")
+    ]
+
+Note that this file contains three GUIDs; we need the CLSID for the class, not those of the library or interface ID.
+To create a self-registering BHO:
+Open HelloWorld.rgs from the Solution Explorer in Visual Studio.
+Add the following code to the bottom of the file:
+
+HKLM {
+  NoRemove SOFTWARE {
+    NoRemove Microsoft {   
+      NoRemove Windows {
+        NoRemove CurrentVersion {
+          NoRemove Explorer {
+            NoRemove 'Browser Helper Objects' {
+              ForceRemove '{D2F7E1E3-C9DC-4349-B72C-D5A708D6DD77}' = s 'HelloWorldBHO' {
+                val 'NoExplorer' = d '1'
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+Replace the GUID that follows ForceRemove above with the CLSID of the BHO found in HelloWorld.idl.Do not replace the curly braces.
+Save the file, and rebuild the solution from the Build menu.Visual Studio registers the object automatically.
+The NoRemove keyword indicates that the key should be not be deleted when the BHO is unregistered. Unless you specify this keyword, empty keys will be removed. The ForceRemove keyword indicates that the key and any values and sub-keys that it contains should be deleted. ForceRemove also causes the key to be recreated when the BHO is registered, if the key already exists.
+Since this BHO is specifically designed for Internet Explorer, we specify the NoExplorer value to prevent Windows Explorer from loading it. Neither the value nor the type makes any difference—as long as the NoExplorer entry exists, Windows Explorer will not load the BHO.
+If you haven't done so already, select Build Solution from the Build menu to build and register the BHO.
+Take a Test Drive
+For a quick test, set a breakpoint in SetSite and start the debugger by pressing F5. When the Executable for Debug Session dialog box appears, select the "Default Web Browser" and click OK. If Internet Explorer is not your default browser, you can browse for the executable.
+Note   On Windows Vista, the Internet Explorer Protected Mode feature launches a separate process and exits, making it a little harder to debug. You can easily turn off Protected Mode for the current session in two ways: launch the browser from a administrative process (such as Visual Studio), or create a local HTML file and specify it as a command line parameter to Internet Explorer.
+As the browser starts, it loads the DLL for the BHO. When the breakpoint is hit, note that the pUnkSite parameter is set. Press F5 again to continue loading the home page.
+Close the browser to verify that SetSite is called again with NULL.
+Responding to Events
+Now that you've confirmed that Internet Explorer can load and run the BHO, let's take our example a little further by extending the BHO to react to browser events. In this section, we describe how to use ATL to implement an event handler for DocumentComplete that displays a message box after the page loads.
+To be notified of events, the BHO establishes a connection point with the browser; to respond to these events, it implements IDispatch. According to the documentation for DocumentComplete, the event has two parameters: pDisp (a pointer to IDispatch) and pUrl. These parameters are passed to IDispatch::Invoke as part of the event; however, unpacking the event parameters by hand is a non-trivial and error-prone task. Fortunately, ATL provides a default implementation that helps to simplify the event-handling logic.
+HelloWorldBHO.h
+Start in HelloWorldBHO.h by including exdispid.h, which defines the dispatch IDs for browser events.
+#include <exdispid.h> // DISPID_DOCUMENTCOMPLETE, etc.
+Next, we indiciate that we want to handle events defined by the DWebBrowserEvents2 interface by adding a class definition for IDispEventImpl, which provides an easy and safe alternative to Invoke for handling events. IDispEventImpl works in conjunction with an event sink map to route events to the appropriate handler function.
+
+class ATL_NO_VTABLE CHelloWorldBHO :
+    . . . 
+    public IDispEventImpl<1, CHelloWorldBHO, &DIID_DWebBrowserEvents2, &LIBID_SHDocVw, 1, 1>
+
+Next, add ATL macros that route the event to a new OnDocumentComplete event handler method, which takes the same arguments, in the same order, as defined by the DocumentComplete event. Place the following code in a public section of the class.
+
+BEGIN_SINK_MAP(CHelloWorldBHO)
+    SINK_ENTRY_EX(1, DIID_DWebBrowserEvents2, DISPID_DOCUMENTCOMPLETE, OnDocumentComplete)
+END_SINK_MAP()
+
+    // DWebBrowserEvents2
+    void STDMETHODCALLTYPE OnDocumentComplete(IDispatch *pDisp, VARIANT *pvarURL); 
+The number supplied to the SINK_ENTRY_EX macro (1) refers to the first parameter of the IDispEventImpl class definition and is used to distinguish between events from different interfaces, if necessary. Also note that you cannot return a value from the event handler; that's OK because Internet Explorer ignores values returned from Invoke anyway.
+Finally, add a private member variable to track whether the object has established a connection with the browser.
+private:
+    BOOL m_fAdvised; 
+HelloWorldBHO.cpp
+To connect the event handler to the browser through the event map, call DispEventAdvise during the processing of SetSite. Likewise, use DispEventUnadvise to break the connection.
+Here is the new implementation of SetSite:
+
+STDMETHODIMP CHelloWorldBHO::SetSite(IUnknown* pUnkSite)
+{
+    if (pUnkSite != NULL)
+    {
+        // Cache the pointer to IWebBrowser2.
+        HRESULT hr = pUnkSite->QueryInterface(IID_IWebBrowser2, (void **)&m_spWebBrowser);
+        if (SUCCEEDED(hr))
+        {
+            // Register to sink events from DWebBrowserEvents2.
+            hr = DispEventAdvise(m_spWebBrowser);
+            if (SUCCEEDED(hr))
+            {
+                m_fAdvised = TRUE;
+            }
+        }
+    }
+    else
+    {
+        // Unregister event sink.
+        if (m_fAdvised)
+        {
+            DispEventUnadvise(m_spWebBrowser);
+            m_fAdvised = FALSE;
+        }
+
+        // Release cached pointers and other resources here.
+        m_spWebBrowser.Release();
+    }
+
+    // Call base class implementation.
+    return IObjectWithSiteImpl<CHelloWorldBHO>::SetSite(pUnkSite);
+}
+Finally, add a simple OnDocumentComplete event handler.
+void STDMETHODCALLTYPE CHelloWorldBHO::OnDocumentComplete(IDispatch *pDisp, VARIANT *pvarURL)
+{
+    // Retrieve the top-level window from the site.
+    HWND hwnd;
+    HRESULT hr = m_spWebBrowser->get_HWND((LONG_PTR*)&hwnd);
+    if (SUCCEEDED(hr))
+    {
+        // Output a message box when page is loaded.
+        MessageBox(hwnd, L"Hello World!", L"BHO", MB_OK);
+    }
+}
+Notice that the message box uses the top-level window of the site as its parent window, rather than simply passing NULL in that parameter. In Internet Explorer 6, a NULL parent window does not block the application, meaning that the user can continue to interact with the browser while the message box is waiting for user input. In some situations, this can cause the browser to hang or crash. In the rare case that a BHO needs to display a UI, it should always ensure that the dialog box is application modal by specifying a handle to the parent window.
+Another Test Drive
+Start up Internet Explorer again by pressing F5. After the document has loaded, the BHO displays its message.
+The "Hello World!" Message Box
+Continue browsing to observe when and how often the message box appears. Notice that the BHO alert is shown not only when the page is loaded, but also when the page is reloaded by clicking the Back button; however, it does not appear when you click the Refresh button. The message box also appears for every new tab and every document loaded in a frame or iframe.
+The event is fired after the page is downloaded and parsed, but before the window.onload event is triggered. In the case of multiple frames, the event is fired multiple times followed by the top-level frame at the end. In the code that follows, we detect the final event of a series by comparing the object passed in the pDisp parameter of the event to the top-level browser that was cached in SetSite.
+Manipulating the DOM
+The following JavaScript code demonstrates a basic manipulation of the DOM. It hides images on the Web page by setting the display attribute of the image's style object to "none."
+function RemoveImages(doc)
+{
+    var images = doc.images;
+    if (images != null)
+    {
+        for (var i = 0; i < images.length; i++) 
+        {
+            var img = images.item(i);
+            img.style.display = "none";
+        }
+    }
+}
+In this final section, we show you how to implement this basic logic in C++.
+HelloWorldBHO.h
+First, open HelloWorldBHO.h and include mshtml.h. This header file defines the interfaces we need for working with the DOM.
+
+#include <mshtml.h>         // DOM interfaces
+
+Next, define the private member method to contain the C++ implementation of the JavaScript above.
+
+private:
+    void RemoveImages(IHTMLDocument2 *pDocument);
+
+HelloWorldBHO.cpp
+The OnDocumentComplete event handler now does two new things. First, it compares the cached WebBrowser pointer to the object for which the event is fired; if they are equal, the event is for the top-level window and the document is fully loaded. Second, it retrieves a pointer to the document object and passes it to RemoveImages.
+void STDMETHODCALLTYPE CHelloWorldBHO::OnDocumentComplete(IDispatch *pDisp, VARIANT *pvarURL)
+{
+    HRESULT hr = S_OK;
+
+    // Query for the IWebBrowser2 interface.
+    CComQIPtr<IWebBrowser2> spTempWebBrowser = pDisp;
+
+    // Is this event associated with the top-level browser?
+    if (spTempWebBrowser && m_spWebBrowser &&
+        m_spWebBrowser.IsEqualObject(spTempWebBrowser))
+    {
+        // Get the current document object from browser...
+        CComPtr<IDispatch> spDispDoc;
+        hr = m_spWebBrowser->get_Document(&spDispDoc);
+        if (SUCCEEDED(hr))
+        {
+            // ...and query for an HTML document.
+            CComQIPtr<IHTMLDocument2> spHTMLDoc = spDispDoc;
+            if (spHTMLDoc != NULL)
+            {
+                // Finally, remove the images.
+                RemoveImages(spHTMLDoc);
+            }
+        }
+    }
+}
+The IDispatch pointer in pDisp contains the IWebBrowser2 interface of the window or frame in which the document has loaded. We store the value in a CComQIPtr class variable, which performs a QueryInterface automatically. Next, to determine if the page is completely loaded, we compare the interface pointer to the one we cached in SetSite for the top-level browser. As a result of this test, we only remove images from documents in the top-level browser frame; documents that do not load into the top-level frame do not pass this test. (For more information, see How To Determine When a Page Is Done Loading in WebBrowser Control and How to get the WebBrowser object model of an HTML frame.)
+It takes two steps to retrieve the HTML document object. Because get_Document retrieves a pointer for the active document even if the browser has hosted a document object of another type (such as a Microsoft Word document), we must further query the active document for an IHTMLDocument2 interface to determine if it is indeed an HTML page. The IHTMLDocument2 interface provides access to the contents of the DHTML DOM.
+After confirming that an HTML document is loaded, we pass the value to RemoveImages. Note that the argument is passed as a pointer to IHTMLDocument2, not as a CComPtr.
+
+void CHelloWorldBHO::RemoveImages(IHTMLDocument2* pDocument)
+{
+    CComPtr<IHTMLElementCollection> spImages;
+
+    // Get the collection of images from the DOM.
+    HRESULT hr = pDocument->get_images(&spImages);
+    if (hr == S_OK && spImages != NULL)
+    {
+        // Get the number of images in the collection.
+        long cImages = 0;
+        hr = spImages->get_length(&cImages);
+        if (hr == S_OK && cImages > 0)
+        {
+            for (int i = 0; i < cImages; i++)
+            {
+                CComVariant svarItemIndex(i);
+                CComVariant svarEmpty;
+                CComPtr<IDispatch> spdispImage;
+
+                // Get the image out of the collection by index.
+                hr = spImages->item(svarItemIndex, svarEmpty, &spdispImage);
+                if (hr == S_OK && spdispImage != NULL)
+                {
+                    // First, query for the generic HTML element interface...
+                    CComQIPtr<IHTMLElement> spElement = spdispImage;
+
+                    if (spElement)
+                    {
+                        // ...then ask for the style interface.
+                        CComPtr<IHTMLStyle> spStyle;
+                        hr = spElement->get_style(&spStyle);
+
+                        // Set display="none" to hide the image.
+                        if (hr == S_OK && spStyle != NULL)
+                        {
+                            static const CComBSTR sbstrNone(L"none");
+                            spStyle->put_display(sbstrNone);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+Interacting with the DOM in C++ is more verbose than JavaScript, but the code flow is essentially the same.
+The preceding code iterates over each item in the images collection. In script, it is clear whether the collection element is being accessed by ordinal or by name; however, in C++ you must manually disambiguate these arguments by passing an empty variant. We again rely on an ATL helper class—this time CComVariant—to minimize the amount of code that we have to write.
+Final Notes
+To facilitate scripting, all objects in the DOM use IDispatch to expose properties and methods that are derived from multiple interfaces. In C++, however, you must explicitly query for the interface that supports the property or method you want to use. For example, an image object supports both the IHTMLElement and IHTMLImgElement interfaces. Therefore, to retrieve a style object for an image, you first have to query for an IHTMLElement interface, which exposes the get_style method.
+Also note that COM rules do not guarantee a valid pointer on failure; therefore, you need to check the HRESULT after every COM call. Moreover, for many DOM methods it is not an error to return a NULL value, so you need to be careful to check both the return value and the pointer value. To make the check even safer, always initialize the pointer to NULL beforehand. Adopting a defensive, verbose, and error-tolerant coding style can help to prevent unpredictable bugs later.
+Summary
+There are various types of BHOs with a wide range of purposes; however, all BHOs share one common feature: a connection to the browser. Because of their ability to tightly integrate with Internet Explorer, BHOs are valued by countless developers who want to extend the functionality of the browser. This article demonstrated how to create a simple BHO that modifies the style attributes of IMG elements in a loaded document. We invite you to extend this entry-level example as you like. You can further explore the possibilities by visiting the following links.
+Related Topics
+IObjectWithSite Interface
+IWebBrowser2 Interface
+DWebBrowserEvents2 Interface
+HTMLDocumentEvents2 Interface
+IHTMLWindow2 Interface
+Writing Stable Browser Extensions
